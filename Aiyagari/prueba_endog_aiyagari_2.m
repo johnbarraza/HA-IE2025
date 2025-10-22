@@ -315,7 +315,7 @@ line([amin amin], [-.1 .08],'Color','Black','LineStyle','--')
 xlabel('Wealth, $a$','interpreter','latex')
 ylabel('Savings, $s_i(a)$','interpreter','latex')
 xlim([amin1 amax1])
-ylim([-0.03 0.05])
+%ylim([-0.03 0.05])
 set(gca,'FontSize',16)
 
 figure(2)
@@ -328,3 +328,26 @@ ylabel('Densities, $g_i(a)$','interpreter','latex')
 xlim([amin1 amax1])
 %ylim([0 0.5])
 set(gca,'FontSize',16)
+
+% Gráfico de la política de oferta laboral (l_j(a))
+
+figure(3) % Crea una nueva figura (o usa un número diferente si ya tienes 3)
+h_labor = plot(a, l(:,1), 'b', a, l(:,2), 'r', 'LineWidth', 2); % Grafica l_1(a) en azul y l_2(a) en rojo
+legend(h_labor, 'l_1(a)', 'l_2(a)', 'Location', 'SouthWest') % Añade leyenda
+grid on % Añade rejilla
+xlabel('Wealth, $a$','interpreter','latex') % Etiqueta eje X
+ylabel('Labor Supply, $l_i(a)$','interpreter','latex') % Etiqueta eje Y
+xlim([amin1 amax1]) % Usa los mismos límites que los otros gráficos si quieres
+% ylim([0.8 1.8]) % Descomenta y ajusta si necesitas cambiar los límites del eje Y
+set(gca,'FontSize',16) % Ajusta tamaño de fuente
+
+%  GRÁFICO DE LA POLÍTICA DE CONSUMO DE EQUILIBRIO
+figure(4) % Crea una nueva figura (o usa un número diferente)
+h_consumo = plot(a, c(:,1), 'b', a, c(:,2), 'r', 'LineWidth', 2); % Grafica c_1(a) en azul y c_2(a) en rojo
+legend(h_consumo, 'c_1(a)', 'c_2(a)', 'Location', 'SouthEast') % Añade leyenda (ajusta la ubicación si es necesario)
+grid on % Añade rejilla
+xlabel('Wealth, $a$','interpreter','latex') % Etiqueta eje X
+ylabel('Consumption, $c_i(a)$','interpreter','latex') % Etiqueta eje Y
+xlim([amin1 amax1]) % Usa los mismos límites que los otros gráficos
+% ylim([0 1.5]) % Descomenta y ajusta si necesitas cambiar los límites del eje Y
+set(gca,'FontSize',16) % Ajusta tamaño de fuente
