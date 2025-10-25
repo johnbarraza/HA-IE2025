@@ -112,12 +112,12 @@ tic; % Inicia cronómetro para este cálculo previo
 for i=1:I
    % Resuelve para el estado z1 en el punto a(i)
    params = [a(i),z1,w,r,ga,frisch]; % Parámetros para la función 'lab_solve'
-   myfun = @(l) lab_solve(l,params); % 'lab_solve' debe implementar la ec. (36)
+   myfun = @(l) lab_solve_aiyagari(l,params); % 'lab_solve' debe implementar la ec. (36)
    [l01,fval,exitflag] = fzero(myfun,x0,options); % Encuentra 'l'
 
    % Resuelve para el estado z2 en el punto a(i)
    params = [a(i),z2,w,r,ga,frisch];
-   myfun = @(l) lab_solve(l,params);
+   myfun = @(l) lab_solve_aiyagari(l,params);
    [l02,fval,exitflag] = fzero(myfun,x0,options); % Encuentra 'l'
    
    % Almacena la oferta laboral de ahorro cero

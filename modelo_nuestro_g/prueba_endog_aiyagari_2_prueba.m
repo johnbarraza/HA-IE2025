@@ -26,6 +26,16 @@ z = [z1,z2];       % Vector de estados de productividad
 la1 = 1/3;         % Tasa de Poisson z1 -> z2 (\lambda_1)
 la2 = 1/3;         % Tasa de Poisson z2 -> z1 (\lambda_2)
 la = [la1,la2];
+
+
+tau = 0.30;       % Tasa impositiva sobre ingreso formal (ejemplo, ajustar para Perú)
+nu = 1.0;         % Peso relativo del ocio/desutilidad del trabajo (ejemplo, calibrar)
+theta = 0.7;      % Ratio salario informal / salario formal (wI = theta*wF) (ejemplo, calibrar)
+v_inf = 0.85;     % Parámetro de rendimientos decrecientes informal (si usas producción informal)
+p_audit = 0.1;    % Probabilidad de auditoría (si usas Restrepo)
+phi_penalty = 1.5;% Factor de multa (si usas Restrepo)
+
+
 % Trabajo agregado (L), se asume igual a la media estacionaria de 'z'
 z_ave = (z1*la2 + z2*la1)/(la1 + la2);
 
@@ -53,7 +63,7 @@ zz = ones(I,1)*z;  % Matriz (I x 2) con los valores de 'z'
 % --- Parámetros HJB (Bucle Interno) ---
 maxit= 100;        % Número máximo de iteraciones para la HJB
 crit = 10^(-6);    % Criterio de convergencia (tolerancia) para la HJB
-Delta = 1000;      % Tamaño del paso para el método implícito
+Delta = 100;      % Tamaño del paso para el método implícito
 
 % Inicialización de matrices
 dVf = zeros(I,2);  % Derivada HJB hacia adelante
@@ -103,32 +113,71 @@ w = (1-al)*Aprod*KD(ir).^al*z_ave^(-al); % Salario de equilibrio
 
 
 %%% nuevo %%%%
-% Opciones para el solver 'fzero' (para no mostrar la salida)
-options=optimset('Display','off');
-% Conjetura inicial para el solver 'fzero'
-x0 = (w*z1)^(frisch*(1-ga)/(1+ga*frisch));
-   
-tic; % Inicia cronómetro para este cálculo previo
-for i=1:I
-   % Resuelve para el estado z1 en el punto a(i)
-   params = [a(i),z1,w,r,ga,frisch]; % Parámetros para la función 'lab_solve'
-   myfun = @(l) lab_solve(l,params); % 'lab_solve' debe implementar la ec. (36)
-   [l01,fval,exitflag] = fzero(myfun,x0,options); % Encuentra 'l'
+%%% Pre-cálculo para Horas y Consumo con Ahorro Cero %%%%
+options = optimset('Display','off', 'TolFun', 1e-8); % Opciones para fzero
+hf0 = zeros(I,2); % Inicializa matriz para horas formales (ahorro cero)
+hi0 = zeros(I,2); % Inicializa matriz para horas informales (ahorro cero)
+c0 = zeros(I,2);  % Inicializa matriz para consumo (ahorro cero)
+l0_total = zeros(I,2); % Horas totales (para conjetura inicial de fzero)
 
-   % Resuelve para el estado z2 en el punto a(i)
-   params = [a(i),z2,w,r,ga,frisch];
-   myfun = @(l) lab_solve(l,params);
-   [l02,fval,exitflag] = fzero(myfun,x0,options); % Encuentra 'l'
-   
-   % Almacena la oferta laboral de ahorro cero
-   l0(i,:)=[l01,l02];
-end
+tic; % Inicia cronómetro
+for j = 1:2 % Itera sobre los estados de productividad z1, z2
+    z_val = z(j); % Productividad actual
+    
+    % Calcula ingresos marginales para este z
+    IncomeMargF_z = w * z_val * (1 - tau);
+    IncomeMargI_z = theta * w * z_val;
+    
+    % Determina qué sector se elige en cada punto 'a' si el ahorro es cero
+    if IncomeMargF_z >= IncomeMargI_z
+        sector_elegido = 'Formal';
+        w_eff_z = IncomeMargF_z;
+    else
+        sector_elegido = 'Informal';
+        w_eff_z = IncomeMargI_z;
+    end
+    
+    % Conjetura inicial razonable para las horas (ej: basado en FOC simple)
+    % c_guess ~ w_eff*0.5 + r*a (asumiendo h=0.5)
+    % h_guess ~ ( (w_eff/nu) * (w_eff*0.5+r*a)^(-ga) )^frisch
+    h_guess_vec = ( (w_eff_z/nu) .* max(w_eff_z*0.5 + r.*a, 1e-6).^(-ga) ).^frisch;
+    h_guess_vec = max(0, min(h_guess_vec, 1)); % Limita entre 0 y 1
+
+    for i = 1:I % Itera sobre la grilla de riqueza 'a'
+        params = [a(i), z_val, w, r, ga, frisch, tau, theta, nu];
+        
+        % Conjetura inicial para fzero en este punto (a,z)
+        h_initial_guess = max(h_guess_vec(i), 1e-4); % Evita guess de 0 exacto
+
+        % Llama a fzero para encontrar la hora óptima en el sector elegido
+        [h_opt_zero_saving, fval, exitflag] = fzero(@(h) lab_solve_h0(h, params), h_initial_guess, options);
+        
+        % Asegura que las horas estén entre 0 y 1
+        h_opt_zero_saving = max(0, min(h_opt_zero_saving, 1));
+
+        % Asigna las horas al sector correcto
+        if strcmp(sector_elegido, 'Formal')
+            hf0(i,j) = h_opt_zero_saving;
+            hi0(i,j) = 0;
+        else
+            hf0(i,j) = 0;
+            hi0(i,j) = h_opt_zero_saving;
+        end
+        
+        % Calcula el consumo consistente con ahorro cero
+        NetIncome0_ij = IncomeMargF_z * hf0(i,j) + IncomeMargI_z * hi0(i,j);
+        c0(i,j) = NetIncome0_ij + r * a(i);
+        
+        % Guarda las horas totales (opcional, podría usarse para lmin/lmax)
+        l0_total(i,j) = hf0(i,j) + hi0(i,j);
+
+    end % fin bucle i (riqueza)
+end % fin bucle j (productividad)
 toc % Fin del cronómetro
-%%% nuevo %%%%
 
-
-lmin = l0(1,:);
-lmax = l0(I,:);
+lmin = l0_total(1,:); % Horas totales en amin (para condición de contorno V_a)
+lmax = l0_total(I,:); % Horas totales en amax (para condición de contorno V_a)
+%%% Fin Pre-cálculo %%%%
 
 
 % Chequeo de que la restricción de endeudamiento es válida (natural)
@@ -158,37 +207,128 @@ for n=1:maxit
     % --- 5.1. Aproximación de derivadas (Diferencias Finitas) ---
     % Derivada hacia adelante: v'(a_i) \approx (v_{i+1} - v_i) / da
     dVf(1:I-1,:) = (V(2:I,:)-V(1:I-1,:))/da;
-    dVf(I,:) = (w*z.*lmax + r.*amax).^(-ga); % Condición de contorno en amax
+    dVf(I,:) = (w*z + r.*amax).^(-ga); % Condición de contorno en amax
     
     % Derivada hacia atrás: v'(a_i) \approx (v_i - v_{i-1}) / da
     dVb(2:I,:) = (V(2:I,:)-V(1:I-1,:))/da;
-    dVb(1,:) = (w*z.*lmin + r.*amin).^(-ga); % Condición de contorno en amin
+    dVb(1,:) = (w*z + r.*amin).^(-ga); % Condición de contorno en amin
     
-    % --- 5.2. ESQUEMA "UPWIND" ---
-    % 1. Ahorro (drift) con derivada hacia adelante (forward)
-    %consumption and savings with forward difference
-    cf = dVf.^(-1/ga);
-    lf = (dVf.*w.*zz).^frisch; % ¡Nuevo! Calcula lf
-    ssf = w*zz.*lf + r.*aa - cf; % ¡Modificado! Usa lf
-    %consumption and savings with backward difference
-    cb = dVb.^(-1/ga);
-    lb = (dVb.*w.*zz).^frisch; % ¡Nuevo! Calcula lb
-    ssb = w*zz.*lb + r.*aa - cb; % ¡Modificado! Usa lb
-    %consumption and derivative of value function at steady state
-    c0 = w*zz.*l0 + r.*aa; % ¡Modificado! Usa l0 pre-calculado
-    % (dV0 ya no se usa directamente en el upwind modificado de HJB_labor_supply)
 
-    
-    % Indicadores para elegir la derivada correcta (esquema upwind)
-    % dV_upwind makes a choice of forward or backward differences...
+
+
+
+% Inicializa matrices para políticas por sector y aproximación
+% --- 5.2. ESQUEMA "UPWIND" con elección Formal/Informal ---
+
+% Inicializa matrices
+    cf = zeros(I,2); ssf = zeros(I,2); hf_f = zeros(I,2); hi_f = zeros(I,2);
+    cb = zeros(I,2); ssb = zeros(I,2); hf_b = zeros(I,2); hi_b = zeros(I,2);
+    u_f = zeros(I,2); u_b = zeros(I,2); % Utilidades para comparar
+
+    for k = 1:2 % Itera Forward (k=1) / Backward (k=2)
+        if k == 1
+            dV = dVf;
+        else
+            dV = dVb;
+        end
+
+        % --- Calcular Óptimos Asumiendo Especialización ---
+
+        % FOC Consumo (común a ambos casos): c = dV^(-1/ga)
+        c_opt = max(dV, 1e-10).^(-1/ga);
+
+        % --- Caso 1: Solo Formal ---
+        IncomeMargF = w .* zz .* (1 - tau);
+        % FOC Formal: nu * hf^(1/frisch) / c_opt^(-ga) = dV * IncomeMargF
+        hf_formal_only = (dV .* IncomeMargF .* c_opt.^ga / nu).^frisch;
+        hf_formal_only = max(0, min(hf_formal_only, 1));
+        NetIncome_Formal = IncomeMargF .* hf_formal_only;
+        % Hamiltoniano Formal: H = u(c,hf,0) + V_a*(NetIncome + ra - c)
+        Util_Formal = c_opt.^(1-ga)/(1-ga) - nu.*hf_formal_only.^(1+1/frisch)/(1+1/frisch);
+        Hamiltonian_F = Util_Formal + dV .* (NetIncome_Formal + r.*aa - c_opt);
+
+        % --- Caso 2: Solo Informal ---
+        % Necesitamos resolver la FOC no lineal para h_i numéricamente
+        hi_informal_only = zeros(I,2); % Inicializar
+        % Conjetura inicial razonable para h_i (podría mejorarse)
+        h_guess_inf = ( (dV .* (1-p_audit*phi_penalty*tau).*zz.*v_inf .* c_opt.^ga / nu).^frisch ).^(1/(1+frisch*(1-v_inf)));
+        h_guess_inf = max(0, min(h_guess_inf, 1));
+
+        for j_z = 1:2 % Resuelve por columna (estado z)
+            for i_a = 1:I % Resuelve por fila (estado a)
+                 hi_informal_only(i_a, j_z) = solve_informal_h(c_opt(i_a, j_z), dV(i_a, j_z), z(j_z), w, r, a(i_a), ga, frisch, tau, nu, v_inf, p_audit, phi_penalty, h_guess_inf(i_a, j_z));
+            end
+        end
+        hi_informal_only = max(0, min(hi_informal_only, 1)); % Asegura [0, 1]
+
+        NetIncome_Informal = (1 - p_audit * phi_penalty * tau) .* zz .* hi_informal_only.^v_inf;
+        % Hamiltoniano Informal: H = u(c,0,hi) + V_a*(NetIncome + ra - c)
+        Util_Informal = c_opt.^(1-ga)/(1-ga) - nu.*hi_informal_only.^(1+1/frisch)/(1+1/frisch);
+        Hamiltonian_I = Util_Informal + dV .* (NetIncome_Informal + r.*aa - c_opt);
+
+        % --- Decisión del Sector (Comparar Hamiltonianos) ---
+        I_choose_formal = (Hamiltonian_F >= Hamiltonian_I);
+        I_choose_informal = 1 - I_choose_formal;
+
+        % Políticas óptimas combinadas
+        hf_opt = hf_formal_only .* I_choose_formal; % hf=0 si elige informal
+        hi_opt = hi_informal_only .* I_choose_informal; % hi=0 si elige formal
+        c_opt_final = c_opt; % El consumo es el mismo en ambos casos dado dV
+
+        % Utilidad óptima
+        Util_opt = Util_Formal .* I_choose_formal + Util_Informal .* I_choose_informal;
+
+        % Almacenar resultados según Forward/Backward
+        if k == 1
+            cf = c_opt_final;
+            hf_f = hf_opt;
+            hi_f = hi_opt;
+            NetIncome_f = NetIncome_Formal .* I_choose_formal + NetIncome_Informal .* I_choose_informal;
+            ssf = NetIncome_f + r.*aa - cf; % Ahorro Forward
+            u_f = Util_opt; % Utilidad Forward (para Hamiltoniano final)
+        else
+            cb = c_opt_final;
+            hf_b = hf_opt;
+            hi_b = hi_opt;
+            NetIncome_b = NetIncome_Formal .* I_choose_formal + NetIncome_Informal .* I_choose_informal;
+            ssb = NetIncome_b + r.*aa - cb; % Ahorro Backward
+            u_b = Util_opt; % Utilidad Backward (para Hamiltoniano final)
+        end
+    end % Fin bucle k
+
+    % --- Caso Ahorro Cero (I0) ---
+    % ¡¡¡ ESTA PARTE TAMBIÉN NECESITA SER RECALCULADA CON PRODUCCIÓN INFORMAL !!!
+    % El bloque '%%% Pre-cálculo %%%' debe adaptarse para usar la producción informal
+    % y comparar utilidades (no solo Ingreso Marginal) para decidir el sector.
+    % La función lab_solve_h0 debe modificarse para usar y^I = z*h^v_inf.
+    % Por ahora, MANTENEMOS LA APROXIMACIÓN ANTERIOR (puede ser imprecisa):
+    IncomeMargF0 = w .* zz .* (1 - tau);
+    IncomeMargI0 = theta * w .* zz; % ¡Usa theta, inconsistente con producción!
+    I_choose_formal0 = (IncomeMargF0 >= IncomeMargI0);
+    I_choose_informal0 = 1-I_choose_formal0;
+    hf0 = l0_total .* I_choose_formal0; % Usa l0_total precalculado (basado en theta)
+    hi0 = l0_total .* I_choose_informal0; % Usa l0_total precalculado (basado en theta)
+    NetIncome0 = IncomeMargF0 .* hf0 + IncomeMargI0 .* hi0;
+    c0 = NetIncome0 + r.*aa;
+    Util0 = c0.^(1-ga)/(1-ga) - nu.*(hf0+hi0).^(1+1/frisch)/(1+1/frisch);
+
+
+    % --- Selección Upwind Final ---
     If = ssf > 0;
     Ib = ssb < 0;
     I0 = (1-If-Ib);
 
-    c = cf.*If + cb.*Ib + c0.*I0;
-    l = lf.*If + lb.*Ib + l0.*I0; % ¡Nuevo! Selecciona l
-    u = c.^(1-ga)/(1-ga) - l.^(1+1/frisch)/(1+1/frisch); % ¡Modificado! Utilidad
-    
+    c = cf.*If + cb.*Ib + c0.*I0; % Consumo final
+    hf = hf_f.*If + hf_b.*Ib + hf0.*I0; % Horas formales finales
+    hi = hi_f.*If + hi_b.*Ib + hi0.*I0; % Horas informales finales
+
+    % --- Utilidad Final (usada en la actualización de V) ---
+    u = u_f.*If + u_b.*Ib + Util0.*I0; % Usa la utilidad óptima calculada
+
+
+
+
+
     % --- 5.3. CONSTRUCCIÓN DE LA MATRIZ DE TRANSICIÓN 'A' ---
     % 'A' es el generador infinitesimal discretizado
     X = -min(ssb,0)/da; % Coeficiente para v_{i-1,j}
@@ -332,8 +472,7 @@ set(gca,'FontSize',16)
 % Gráfico de la política de oferta laboral (l_j(a))
 
 figure(3) % Crea una nueva figura (o usa un número diferente si ya tienes 3)
-h_labor = plot(a, l(:,1), 'b', a, l(:,2), 'r', 'LineWidth', 2); % Grafica l_1(a) en azul y l_2(a) en rojo
-legend(h_labor, 'l_1(a)', 'l_2(a)', 'Location', 'SouthWest') % Añade leyenda
+h_labor = plot(a, hf(:,1)+hi(:,1), 'b', a, hf(:,2)+hi(:,2), 'r', 'LineWidth', 2); % Grafica hf+hilegend(h_labor, 'l_1(a)', 'l_2(a)', 'Location', 'SouthWest') % Añade leyenda
 grid on % Añade rejilla
 xlabel('Wealth, $a$','interpreter','latex') % Etiqueta eje X
 ylabel('Labor Supply, $l_i(a)$','interpreter','latex') % Etiqueta eje Y
@@ -351,3 +490,15 @@ ylabel('Consumption, $c_i(a)$','interpreter','latex') % Etiqueta eje Y
 xlim([amin1 amax1]) % Usa los mismos límites que los otros gráficos
 % ylim([0 1.5]) % Descomenta y ajusta si necesitas cambiar los límites del eje Y
 set(gca,'FontSize',16) % Ajusta tamaño de fuente
+
+% Gráfico Opcional: Horas Formales
+figure(5)
+plot(a, hf(:,1), 'b', a, hf(:,2), 'r', 'LineWidth', 2);
+legend('h_f_1(a)', 'h_f_2(a)', 'Location', 'SouthWest')
+grid on; xlabel('Wealth, $a$','interpreter','latex'); ylabel('Formal Labor, $h_{f,i}(a)$','interpreter','latex'); xlim([amin1 amax1]); set(gca,'FontSize',16)
+
+% Gráfico Opcional: Horas Informales
+figure(6)
+plot(a, hi(:,1), 'b', a, hi(:,2), 'r', 'LineWidth', 2);
+legend('h_i_1(a)', 'h_i_2(a)', 'Location', 'NorthEast') % Puede necesitar ajustar Location
+grid on; xlabel('Wealth, $a$','interpreter','latex'); ylabel('Informal Labor, $h_{i,i}(a)$','interpreter','latex'); xlim([amin1 amax1]); set(gca,'FontSize',16)

@@ -13,6 +13,8 @@ ga = 2;            % Coeficiente de aversión relativa al riesgo (\gamma)
 rho = 0.05;        % Tasa de descuento subjetiva
 d = 0.05;          % Tasa de depreciación del capital (\delta)
 
+frisch = 1/2;     % Elasticidad de Frisch de la oferta laboral (\varphi)
+
 % --- Parámetros de las Firmas (Producción) ---
 al = 1/3;          % Participación del capital (\alpha) en Cobb-Douglas Y = A*K^al*L^(1-al)
 Aprod = 0.1;       % Productividad total de los factores (A)
@@ -96,6 +98,39 @@ KD(ir) = (al*Aprod/(r + d))^(1/(1-al))*z_ave;
 % FOC Trabajo: w = F_L = (1-al)*Aprod*(K/L)^al
 w = (1-al)*Aprod*KD(ir).^al*z_ave^(-al); % Salario de equilibrio
 
+
+
+
+
+%%% nuevo %%%%
+% Opciones para el solver 'fzero' (para no mostrar la salida)
+options=optimset('Display','off');
+% Conjetura inicial para el solver 'fzero'
+x0 = (w*z1)^(frisch*(1-ga)/(1+ga*frisch));
+   
+tic; % Inicia cronómetro para este cálculo previo
+for i=1:I
+   % Resuelve para el estado z1 en el punto a(i)
+   params = [a(i),z1,w,r,ga,frisch]; % Parámetros para la función 'lab_solve'
+   myfun = @(l) lab_solve(l,params); % 'lab_solve' debe implementar la ec. (36)
+   [l01,fval,exitflag] = fzero(myfun,x0,options); % Encuentra 'l'
+
+   % Resuelve para el estado z2 en el punto a(i)
+   params = [a(i),z2,w,r,ga,frisch];
+   myfun = @(l) lab_solve(l,params);
+   [l02,fval,exitflag] = fzero(myfun,x0,options); % Encuentra 'l'
+   
+   % Almacena la oferta laboral de ahorro cero
+   l0(i,:)=[l01,l02];
+end
+toc % Fin del cronómetro
+%%% nuevo %%%%
+
+
+lmin = l0(1,:);
+lmax = l0(I,:);
+
+
 % Chequeo de que la restricción de endeudamiento es válida (natural)
 if w*z(1) + r*amin < 0
     disp('CAREFUL: borrowing constraint too loose')
@@ -123,33 +158,36 @@ for n=1:maxit
     % --- 5.1. Aproximación de derivadas (Diferencias Finitas) ---
     % Derivada hacia adelante: v'(a_i) \approx (v_{i+1} - v_i) / da
     dVf(1:I-1,:) = (V(2:I,:)-V(1:I-1,:))/da;
-    dVf(I,:) = (w*z + r.*amax).^(-ga); % Condición de contorno en amax
+    dVf(I,:) = (w*z.*lmax + r.*amax).^(-ga); % Condición de contorno en amax
     
     % Derivada hacia atrás: v'(a_i) \approx (v_i - v_{i-1}) / da
     dVb(2:I,:) = (V(2:I,:)-V(1:I-1,:))/da;
-    dVb(1,:) = (w*z + r.*amin).^(-ga); % Condición de contorno en amin
+    dVb(1,:) = (w*z.*lmin + r.*amin).^(-ga); % Condición de contorno en amin
     
     % --- 5.2. ESQUEMA "UPWIND" ---
     % 1. Ahorro (drift) con derivada hacia adelante (forward)
-    cf = dVf.^(-1/ga); % c = (u')^{-1}(v') = (v')^{-1/ga}
-    ssf = w*zz + r.*aa - cf; % s_j(a) = w*z_j + r*a - c_j(a)
-    
-    % 2. Ahorro (drift) con derivada hacia atrás (backward)
+    %consumption and savings with forward difference
+    cf = dVf.^(-1/ga);
+    lf = (dVf.*w.*zz).^frisch; % ¡Nuevo! Calcula lf
+    ssf = w*zz.*lf + r.*aa - cf; % ¡Modificado! Usa lf
+    %consumption and savings with backward difference
     cb = dVb.^(-1/ga);
-    ssb = w*zz + r.*aa - cb;
-    
-    % 3. Ahorro nulo (drift = 0)
-    c0 = w*zz + r.*aa; % c = w*z + r*a
+    lb = (dVb.*w.*zz).^frisch; % ¡Nuevo! Calcula lb
+    ssb = w*zz.*lb + r.*aa - cb; % ¡Modificado! Usa lb
+    %consumption and derivative of value function at steady state
+    c0 = w*zz.*l0 + r.*aa; % ¡Modificado! Usa l0 pre-calculado
+    % (dV0 ya no se usa directamente en el upwind modificado de HJB_labor_supply)
+
     
     % Indicadores para elegir la derivada correcta (esquema upwind)
-    If = ssf > 0; % Usar 'forward' si el drift (ahorro) es positivo
-    Ib = ssb < 0; % Usar 'backward' si el drift (ahorro) es negativo
-    I0 = (1-If-Ib); % Usar 'cero' (c0) si el drift cambia de signo
-    
-    % Construye la política de consumo final
+    % dV_upwind makes a choice of forward or backward differences...
+    If = ssf > 0;
+    Ib = ssb < 0;
+    I0 = (1-If-Ib);
+
     c = cf.*If + cb.*Ib + c0.*I0;
-    % Calcula la utilidad
-    u = c.^(1-ga)/(1-ga);
+    l = lf.*If + lb.*Ib + l0.*I0; % ¡Nuevo! Selecciona l
+    u = c.^(1-ga)/(1-ga) - l.^(1+1/frisch)/(1+1/frisch); % ¡Modificado! Utilidad
     
     % --- 5.3. CONSTRUCCIÓN DE LA MATRIZ DE TRANSICIÓN 'A' ---
     % 'A' es el generador infinitesimal discretizado
@@ -290,20 +328,3 @@ ylabel('Densities, $g_i(a)$','interpreter','latex')
 xlim([amin1 amax1])
 %ylim([0 0.5])
 set(gca,'FontSize',16)
-
-
-% Crea el gráfico
-set(gca,'FontSize',14)
-% Grafica S(r) vs K_D(r)
-plot(S,r_grid,KD,rrr,zeros(1,Ir)+amin,rrr,'--',aaa,ones(1,Ir)*rho,'--',aaa,ones(1,Ir)*(-d),'--','LineWidth',2)
-% Añade etiquetas y líneas guía
-text(0.05,0.052,'$r = \rho$','FontSize',16,'interpreter','latex')
-text(0.05,-0.054,'$r = -\delta$','FontSize',16,'interpreter','latex')
-text(0.1,0.02,'$S(r)$','FontSize',16,'interpreter','latex') % Curva de Oferta de Capital (Hogares)
-text(0.29,0.02,'$r=F_K(K,1)-\delta$','FontSize',16,'interpreter','latex') % Curva de Demanda de Capital (Firmas)
-text(0.01,0.035,'$a=\underline{a}$','FontSize',16,'interpreter','latex') % Línea de restricción a=0
-ylabel('$r$','FontSize',16,'interpreter','latex') % Eje Y: Tasa de interés
-xlabel('$K$','FontSize',16,'interpreter','latex') % Eje X: Capital
-% Ajusta los límites de los ejes
-ylim([-0.06 0.06])
-xlim([amin1 0.6])
