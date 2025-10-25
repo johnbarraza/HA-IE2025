@@ -175,48 +175,126 @@ for ir = 1:Ir
             end
             
             % --- ESQUEMA UPWIND ---
-            % Forward
-            cf = dVf.^(-1/ga);
-            lf_f = ((dVf.*wf.*zz*(1-tau))/psi_f).^frisch;
-            li_f = ((dVf.*wi.*zz)/psi_i).^frisch;
+            % --- ESQUEMA UPWIND con Optimización Correcta de Horas ---
+
+            % Inicializa matrices para políticas finales por aproximación
+            cf = zeros(I,2); lf_f = zeros(I,2); li_f = zeros(I,2); ssf = zeros(I,2);
+            cb = zeros(I,2); lf_b = zeros(I,2); li_b = zeros(I,2); ssb = zeros(I,2);
+            u_f = zeros(I,2); u_b = zeros(I,2); % Utilidades (necesarias si I0 usa utilidad)
+
+            for k = 1:2 % Itera sobre Forward (k=1) / Backward (k=2)
+                if k == 1
+                    dV = dVf; % Usa derivada forward
+                else
+                    dV = dVb; % Usa derivada backward
+                end
+
+                % --- 1. Calcular Consumo Óptimo (dado dV) ---
+                c_opt = max(dV, 1e-10).^(-1/ga);
+
+                % --- 2. Calcular Horas Óptimas No Restringidas ---
+                % (Ignorando l^f+l^i <= 1 por ahora)
+                wf_eff = wf.*zz.*(1-tau); % Salario neto formal efectivo
+                wi_eff = wi.*zz;          % Salario neto informal efectivo
+
+                % FOC Formal: psi_f * lf^(1/frisch) = c^(-ga) * dV * wf_eff
+                lf_unc = ((c_opt.^(-ga) .* dV .* wf_eff) / psi_f).^frisch;
+                lf_unc = max(0, lf_unc); % Asegura no negatividad
+
+                % FOC Informal: psi_i * li^(1/frisch) = c^(-ga) * dV * wi_eff
+                li_unc = ((c_opt.^(-ga) .* dV .* wi_eff) / psi_i).^frisch;
+                li_unc = max(0, li_unc); % Asegura no negatividad
+
+                % --- 3. Verificar Restricción de Tiempo Total ---
+                ltotal_unc = lf_unc + li_unc;
+                idx_bind = ltotal_unc > 1; % Índice donde la restricción muerde
+
+                % Inicializar horas óptimas con la solución no restringida
+                lf_opt = lf_unc;
+                li_opt = li_unc;
+
+                % --- 4. Calcular Horas Óptimas en la Frontera (si idx_bind es true) ---
+                if any(idx_bind(:))
+                    % En la frontera lf + li = 1:
+                    % MRS_f / MRS_i = wf_eff / wi_eff
+                    % (psi_f * lf^(1/frisch)) / (psi_i * li^(1/frisch)) = wf_eff / wi_eff
+                    % (lf / li)^(1/frisch) = (psi_i * wf_eff) / (psi_f * wi_eff)
+                    
+                    % Ratio objetivo R
+                    R_ratio = (psi_i .* wf_eff) ./ (psi_f .* wi_eff);
+                    % Manejar caso wi_eff=0 o psi_f=0 (división por cero)
+                    R_ratio(wi_eff <= 1e-10 | psi_f <= 1e-10) = Inf; 
+                    R_ratio(wf_eff <= 1e-10 | psi_i <= 1e-10) = 0;
+
+                    % Exponente X = R^frisch
+                    X_exp = R_ratio.^frisch;
+
+                    % Resolver lf = li * X => lf = (1-lf) * X => lf(1+X) = X
+                    lf_bound = X_exp ./ (1 + X_exp);
+                    
+                    % Manejar casos extremos de X_exp
+                    lf_bound(X_exp == Inf) = 1; % Si R=Inf, todo formal
+                    lf_bound(X_exp == 0) = 0;   % Si R=0, todo informal
+                    lf_bound(isnan(lf_bound)) = 0.5; % Fallback (ej. si wi=wf=0)
+
+                    % Asegurar que esté entre 0 y 1
+                    lf_bound = max(0, min(1, lf_bound));
+                    li_bound = 1 - lf_bound;
+
+                    % Asignar solo donde la restricción muerde
+                    lf_opt(idx_bind) = lf_bound(idx_bind);
+                    li_opt(idx_bind) = li_bound(idx_bind);
+                end
+                
+                % --- 5. Manejar Esquinas (Asegurar que no se trabaja si no vale la pena) ---
+                % Si el salario efectivo es cero o negativo, las horas deben ser cero
+                lf_opt(wf_eff <= 1e-10) = 0;
+                li_opt(wi_eff <= 1e-10) = 0;
+                
+                % (Una verificación KKT más completa podría añadirse aquí si fuera necesario,
+                % pero la lógica anterior usualmente captura las esquinas donde un
+                % salario es mucho menor que el otro)
+
+                % --- 6. Almacenar resultados y calcular drift ---
+                if k == 1 % Forward
+                    cf = c_opt;
+                    lf_f = lf_opt;
+                    li_f = li_opt;
+                    NetIncome_f = wf_eff .* lf_f + wi_eff .* li_f;
+                    ssf = NetIncome_f + r.*aa - cf;
+                    % Calcular utilidad (opcional, si se necesita para I0)
+                    % u_f = cf.^(1-ga)/(1-ga) - psi_f.*lf_f.^(1+1/frisch)/(1+1/frisch) ...
+                    %     - psi_i.*li_f.^(1+1/frisch)/(1+1/frisch);
+                else % Backward
+                    cb = c_opt;
+                    lf_b = lf_opt;
+                    li_b = li_opt;
+                    NetIncome_b = wf_eff .* lf_b + wi_eff .* li_b;
+                    ssb = NetIncome_b + r.*aa - cb;
+                    % Calcular utilidad (opcional)
+                    % u_b = cb.^(1-ga)/(1-ga) - psi_f.*lf_b.^(1+1/frisch)/(1+1/frisch) ...
+                    %     - psi_i.*li_b.^(1+1/frisch)/(1+1/frisch);
+                end
+            end % Fin del bucle k sobre Forward/Backward
+
+            % --- Caso Ahorro Cero (I0) ---
+            % Usa los lf0, li0, c0 precalculados (de lab_solve_dos_sectores corregido)
+            % Asegúrate que lab_solve_dos_sectores esté siendo llamado correctamente antes
             
-            % Restringir horas totales
-            ltotal_f = lf_f + li_f;
-            idx_exceed = ltotal_f > 1;
-            lf_f(idx_exceed) = lf_f(idx_exceed) ./ ltotal_f(idx_exceed);
-            li_f(idx_exceed) = li_f(idx_exceed) ./ ltotal_f(idx_exceed);
-            
-            ssf = wf*zz.*lf_f*(1-tau) + wi*zz.*li_f + r.*aa - cf;
-            
-            % Backward
-            cb = dVb.^(-1/ga);
-            lf_b = ((dVb.*wf.*zz*(1-tau))/psi_f).^frisch;
-            li_b = ((dVb.*wi.*zz)/psi_i).^frisch;
-            
-            % Restringir horas totales
-            ltotal_b = lf_b + li_b;
-            idx_exceed = ltotal_b > 1;
-            lf_b(idx_exceed) = lf_b(idx_exceed) ./ ltotal_b(idx_exceed);
-            li_b(idx_exceed) = li_b(idx_exceed) ./ ltotal_b(idx_exceed);
-            
-            ssb = wf*zz.*lf_b*(1-tau) + wi*zz.*li_b + r.*aa - cb;
-            
-            % En steady state (s=0) - ya calculado en lab_solve_dos_sectores
-            % c0, lf0, li0 ya fueron calculados arriba
-            
-            % Indicadores upwind
+            % --- Selección Upwind Final ---
             If = ssf > 0;
             Ib = ssb < 0;
-            I0 = (1-If-Ib);
+            I0 = (1-If-Ib); % Drift cero o cambio de signo
+
+            c = cf.*If + cb.*Ib + c0.*I0; % Consumo final
+            lf = lf_f.*If + lf_b.*Ib + lf0.*I0; % Horas formales finales
+            li = li_f.*If + li_b.*Ib + li0.*I0; % Horas informales finales
             
-            % Políticas finales
-            c = cf.*If + cb.*Ib + c0.*I0;
-            lf = lf_f.*If + lf_b.*Ib + lf0.*I0;
-            li = li_f.*If + li_b.*Ib + li0.*I0;
-            
-            % Utilidad
-            u = c.^(1-ga)/(1-ga) - psi_f*lf.^(1+1/frisch)/(1+1/frisch) ...
-                - psi_i*li.^(1+1/frisch)/(1+1/frisch);
+            % --- Utilidad Final (usada en la actualización de V) ---
+            % Recalcula la utilidad basada en las políticas finales
+            u = c.^(1-ga)/(1-ga) - psi_f*max(lf,0).^(1+1/frisch)/(1+1/frisch) ...
+                - psi_i*max(li,0).^(1+1/frisch)/(1+1/frisch);
+            % Usar max(lf,0) por si acaso lf0/li0 no fueran estrictamente >=0
             
             % --- MATRIZ DE TRANSICIÓN ---
             X = -min(ssb,0)/da;

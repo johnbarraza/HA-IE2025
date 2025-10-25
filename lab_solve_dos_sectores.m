@@ -3,8 +3,8 @@ function [lf, li, c] = lab_solve_dos_sectores(a, z, wf, wi, r, ga, frisch, psi_f
 % para modelo con sectores formal e informal. Maneja restricciones.
 
 % Opciones para el solver
-options_fsolve = optimoptions('fsolve', 'Display', 'off', 'TolFun', 1e-9, 'TolX', 1e-9);
-options_fzero = optimset('Display','off', 'TolFun', 1e-9, 'TolX', 1e-9);
+options_fsolve = optimset('Display', 'off', 'TolFun', 1e-9, 'TolX', 1e-9);
+options_fzero = optimset('Display','off', 'TolFun', 1e-9, 'TolX', 1e-9); % Esta ya estaba bien
 
 % --- Intento 1: Resolver el sistema de FOCs sin imponer l^f + l^i <= 1 ---
 fun = @(x) system_focs(x, a, z, wf, wi, r, ga, frisch, psi_f, psi_i, tau);
@@ -43,32 +43,134 @@ else % fsolve falló o la solución está fuera de la frontera l^f + l^i = 1
     
     % --- Intento 2: Resolver sobre la frontera l^f + l^i = 1 ---
     % FOC_f / FOC_i => (lf / (1-lf))^(1/frisch) = (psi_i * wf * (1-tau)) / (psi_f * wi)
-    ratio_target = (psi_i * wf * (1-tau)) / (psi_f * wi);
-    
-    % Función para encontrar lf en la frontera
-    fun_boundary = @(lf_bound) (max(lf_bound, 1e-10) / max(1 - lf_bound, 1e-10))^(1/frisch) - ratio_target;
-    
-    % Resolver para lf_boundary (entre 0 y 1)
-    if fun_boundary(1e-9) * fun_boundary(1-1e-9) < 0 % Si hay cambio de signo
-        [lf_bound, ~, flag_fzero_bnd] = fzero(fun_boundary, [1e-9, 1-1e-9], options_fzero);
-        if flag_fzero_bnd ~= 1
-            lf_bound = 0.5; % Fallback si fzero falla
+
+   lf_bound = NaN; % Inicializa
+    util_bound = -Inf; % Inicializa
+
+    % Calcular ratio_target de forma segura
+    denominator_ratio = psi_f * wi * z_val;
+    if abs(denominator_ratio) < 1e-20
+        if abs(psi_i * wf * z_val * (1-tau)) < 1e-20
+             ratio_target = NaN; % Caso 0/0
+        else
+             ratio_target = Inf; % Caso num/0
         end
-    elseif fun_boundary(1e-9) > 0 % Solución es lf=0
-        lf_bound = 0;
-    else % Solución es lf=1
-        lf_bound = 1;
+    else
+        ratio_target = (psi_i * wf * z_val * (1-tau)) / denominator_ratio;
     end
+
+    % --- Manejo de casos extremos de ratio_target ---
+    if isnan(ratio_target) || ratio_target < 0
+        warning('Ratio target inválido (NaN o negativo). Asignando fallback.');
+        if wf*(1-tau) > wi && wf*(1-tau) > 0
+            lf_bound = 1;
+        elseif wi > wf*(1-tau) && wi > 0
+            lf_bound = 0;
+        else
+             lf_bound = 0;
+        end
         
+    elseif isinf(ratio_target) || ratio_target > 1e30
+        lf_bound = 1;
+    elseif ratio_target < 1e-30
+        lf_bound = 0;
+    else
+        % --- ratio_target es finito, positivo y razonable: intentar evaluar ---
+        fun_boundary = @(lf_b) (max(lf_b, 1e-10) / max(1 - lf_b, 1e-10))^(1/frisch) - ratio_target;
+
+        % --- Evaluar en los extremos con manejo de errores y magnitud ---
+        val_low = NaN; val_high = NaN;
+        MAX_ACCEPTABLE_VALUE = 1e17; % Límite antes de considerar infinito numérico
+
+        try
+            val_low_temp = fun_boundary(1e-9);
+            % Chequea finitud Y magnitud razonable
+            if isfinite(val_low_temp) && abs(val_low_temp) < MAX_ACCEPTABLE_VALUE
+                val_low = val_low_temp;
+            else
+                warning('Valor extremo o no finito en extremo inferior de fun_boundary.');
+            end
+        catch ME_low
+            warning('Error evaluando fun_boundary en extremo inferior: %s', ME_low.message);
+        end
+
+        try
+            val_high_temp = fun_boundary(1-1e-9);
+            % Chequea finitud Y magnitud razonable
+            if isfinite(val_high_temp) && abs(val_high_temp) < MAX_ACCEPTABLE_VALUE
+                val_high = val_high_temp;
+            else
+                 warning('Valor extremo o no finito en extremo superior de fun_boundary.');
+                 % Si val_high explotó, lf_bound probablemente es 1
+                 if isnan(lf_bound) % Solo asigna si no se determinó antes
+                     lf_bound = 1;
+                 end
+            end
+        catch ME_high
+            warning('Error evaluando fun_boundary en extremo superior: %s', ME_high.message);
+        end
+
+        % --- Decidir basado en los valores (si lf_bound no se asignó ya) ---
+        if isnan(lf_bound) % Si no fue asignado por ratio_target extremo o por val_high extremo
+
+            if isnan(val_low) || isnan(val_high) % Si alguna evaluación falló
+                 warning('Valores no válidos en extremos de fun_boundary. Asignando según ratio_target.');
+                 if ratio_target > 1
+                     lf_bound = 1;
+                 else
+                     lf_bound = 0;
+                 end
+            else
+                % --- Los valores son finitos y razonables, proceder ---
+                if val_low * val_high < 0 && abs(val_low) > 1e-12 && abs(val_high) > 1e-12
+                    % Hay cambio de signo claro, intentar fzero
+                    [lf_bound_sol, ~, flag_fzero_bnd] = fzero(fun_boundary, [1e-9, 1-1e-9], options_fzero);
+                    if flag_fzero_bnd == 1
+                        lf_bound = lf_bound_sol;
+                    else
+                         warning('fzero falló en frontera, usando aproximación de borde.');
+                         if abs(val_low) < abs(val_high)
+                             lf_bound = 1e-9;
+                         else
+                             lf_bound = 1-1e-9;
+                         end
+                    end
+                elseif abs(val_low) <= 1e-12
+                     lf_bound = 0;
+                elseif abs(val_high) <= 1e-12
+                     lf_bound = 1;
+                elseif val_low > 0
+                     lf_bound = 0;
+                elseif val_high < 0
+                     lf_bound = 1;
+                else
+                     warning('Caso residual fun_boundary.');
+                     if abs(val_low) < abs(val_high)
+                          lf_bound = 0;
+                     else
+                          lf_bound = 1;
+                     end
+                end
+            end
+        end % Fin del if isnan(lf_bound)
+    end % Fin del else (ratio_target razonable)
+
+    % --- Calcular li_bound, c_bound, util_bound ---
     lf_bound = max(0, min(1, lf_bound));
     li_bound = 1 - lf_bound;
-    c_bound = wf*z*lf_bound*(1-tau) + wi*z*li_bound + r*a;
+    c_bound = wf*z_val*lf_bound*(1-tau) + wi*z_val*li_bound + r*a; % Usa z_val
     c_bound = max(1e-9, c_bound);
+
+    util_bound = -Inf;
+    if c_bound > 1e-9 && isfinite(c_bound)
+        util_val_f = - psi_f*lf_bound^(1+1/frisch)/(1+1/frisch);
+        util_val_i = - psi_i*li_bound^(1+1/frisch)/(1+1/frisch);
+        if isnan(util_val_f), util_val_f = 0; end
+        if isnan(util_val_i), util_val_i = 0; end
+        util_bound = c_bound^(1-ga)/(1-ga) + util_val_f + util_val_i;
+        if isnan(util_bound), util_bound = -Inf; end
+    end
     
-    % Calcular utilidad en la frontera
-    util_bound = c_bound^(1-ga)/(1-ga) - psi_f*lf_bound^(1+1/frisch)/(1+1/frisch) ...
-                 - psi_i*li_bound^(1+1/frisch)/(1+1/frisch);
-             
     % --- Intento 3: Comprobar Esquinas ---
     
     % Esquina 1: lf=0, li=?

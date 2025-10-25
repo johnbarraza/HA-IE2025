@@ -291,19 +291,3 @@ xlim([amin1 amax1])
 %ylim([0 0.5])
 set(gca,'FontSize',16)
 
-
-% Crea el gráfico
-set(gca,'FontSize',14)
-% Grafica S(r) vs K_D(r)
-plot(S,r_grid,KD,rrr,zeros(1,Ir)+amin,rrr,'--',aaa,ones(1,Ir)*rho,'--',aaa,ones(1,Ir)*(-d),'--','LineWidth',2)
-% Añade etiquetas y líneas guía
-text(0.05,0.052,'$r = \rho$','FontSize',16,'interpreter','latex')
-text(0.05,-0.054,'$r = -\delta$','FontSize',16,'interpreter','latex')
-text(0.1,0.02,'$S(r)$','FontSize',16,'interpreter','latex') % Curva de Oferta de Capital (Hogares)
-text(0.29,0.02,'$r=F_K(K,1)-\delta$','FontSize',16,'interpreter','latex') % Curva de Demanda de Capital (Firmas)
-text(0.01,0.035,'$a=\underline{a}$','FontSize',16,'interpreter','latex') % Línea de restricción a=0
-ylabel('$r$','FontSize',16,'interpreter','latex') % Eje Y: Tasa de interés
-xlabel('$K$','FontSize',16,'interpreter','latex') % Eje X: Capital
-% Ajusta los límites de los ejes
-ylim([-0.06 0.06])
-xlim([amin1 0.6])
