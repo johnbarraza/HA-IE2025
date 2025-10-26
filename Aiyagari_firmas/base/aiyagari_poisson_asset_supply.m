@@ -55,7 +55,7 @@ c = zeros(I,2);    % Política de consumo
 % Matriz (sparse) que captura los saltos entre estados de productividad (z1 <-> z2)
 Aswitch = [-speye(I)*la(1),speye(I)*la(1);speye(I)*la(2),-speye(I)*la(2)];
 
-% --- Grilla de Tasa de Interés (¡NUEVO!) ---
+% --- Grilla de Tasa de Interés ---
 % El objetivo de este script es trazar la curva S(r)
 Ir = 100;         % Número de puntos en la grilla de 'r'
 rmin = -0.0499;   % Tasa de interés mínima (cerca de -delta)

@@ -215,4 +215,4 @@ ylabel('$r$','FontSize',16,'interpreter','latex')
 xlabel('$S(r)$','FontSize',16,'interpreter','latex')
 ylim([rmin 0.06])
 xlim([amin1 Smax])
-print -depsc asset_supply.eps
+% print -depsc asset_supply.eps % (Comentado para no guardar archivo)

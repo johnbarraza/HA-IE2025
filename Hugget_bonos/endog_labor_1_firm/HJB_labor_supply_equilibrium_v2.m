@@ -153,8 +153,6 @@ for n=1:maxit
     u = c.^(1-s)/(1-s) - l.^(1+1/frisch)/(1+1/frisch);
      
     % --- 6.3. CONSTRUCCIÓN DE LA MATRIZ DE TRANSICIÓN 'A' ---
-    % Idéntico al script anterior, pero usando los 'ssb' y 'ssf'
-    % que ahora dependen de la oferta laboral endógena.
     
     X = -Ib.*ssb/da; % Coeficiente para v_{i-1} (viene de 'backward')
     Y = -If.*ssf/da + Ib.*ssb/da; % Coeficiente para v_i
