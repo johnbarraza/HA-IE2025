@@ -315,7 +315,7 @@ line([amin amin], [-.1 .08],'Color','Black','LineStyle','--')
 xlabel('Wealth, $a$','interpreter','latex')
 ylabel('Savings, $s_i(a)$','interpreter','latex')
 xlim([amin1 amax1])
-ylim([-0.03 0.05])
+%ylim([-0.03 0.05])
 set(gca,'FontSize',16)
 
 figure(2)
