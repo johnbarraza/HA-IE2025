@@ -1,4 +1,5 @@
 {
     "MATLAB.installPath": "C:\\Program Files\\MATLAB\\R2025b",
-    "MATLAB.startDebuggerAutomatically": true
+    "MATLAB.startDebuggerAutomatically": true,
+    "chatgpt.runCodexInWindowsSubsystemForLinux": true
 }

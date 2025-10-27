@@ -290,3 +290,4 @@ ylabel('Densities, $g_i(a)$','interpreter','latex')
 xlim([amin1 amax1])
 %ylim([0 0.5])
 set(gca,'FontSize',16)
+

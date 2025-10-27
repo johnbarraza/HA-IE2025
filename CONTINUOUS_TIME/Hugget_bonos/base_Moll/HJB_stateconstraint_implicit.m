@@ -1,26 +1,25 @@
 %Optimized for speed by SeHyoun Ahn
 
-clear all; clc; close all;
+clear all; clc;
 
 tic;
 
-s = 2;
-rho = 0.05;
+s = 2; %CRRA utility with parameter s
+r = 0.03; %interest rate
+% s = 0.5;
+% r = 0.045;
+rho = 0.05; %discount rate
 z1 = .1;
 z2 = .2;
 z = [z1,z2];
-la1 = 0.001;
-la2 = 0.001;
-% la1 = 0.02;
-% la2 = 0.03;
-la1 = 1.5;
-la2 = 1;
+la1 = 0.02;
+la2 = 0.03;
 la = [la1,la2];
 
 
 I=500;
-amin = -0.15;
-amax = 10;
+amin = -0.02; %borrowing constraint
+amax = 2;
 a = linspace(amin,amax,I)';
 da = (amax-amin)/(I-1);
 
@@ -30,7 +29,7 @@ zz = ones(I,1)*z;
 
 maxit= 100;
 crit = 10^(-6);
-Delta = 40;
+Delta = 1000;
 
 dVf = zeros(I,2);
 dVb = zeros(I,2);
@@ -38,26 +37,13 @@ c = zeros(I,2);
 
 Aswitch = [-speye(I)*la(1),speye(I)*la(1);speye(I)*la(2),-speye(I)*la(2)];
 
-Ir = 20;
-% rmin = 0.00001;
-rmin = -0.05;
-rmax = 0.04;
-r_grid = linspace(rmin,rmax,Ir);
-
 %INITIAL GUESS
-r = r_grid(1);
-% v0(:,1) = (z(1) + r.*a).^(1-s)/(1-s)/rho;
-% v0(:,2) = (z(2) + r.*a).^(1-s)/(1-s)/rho;
-v0(:,1) = (z(1) + max(r,0.01).*a).^(1-s)/(1-s)/rho;
-v0(:,2) = (z(2) + max(r,0.01).*a).^(1-s)/(1-s)/rho;
+v0(:,1) = (z(1) + r.*a).^(1-s)/(1-s)/rho;
+v0(:,2) = (z(2) + r.*a).^(1-s)/(1-s)/rho;
 
-for ir=1:Ir;
-
-r = r_grid(ir);
-
-if ir>1
-v0 = V_r(:,:,ir-1);
-end
+% z_ave = la2/(la1+la2)*z(1) + la1/(la1+la2)*z(2);
+% v0(:,1) = (z_ave + r.*a).^(1-s)/(1-s)/rho;
+% v0(:,2) = (z_ave + r.*a).^(1-s)/(1-s)/rho;
 
 v = v0;
 
@@ -106,12 +92,12 @@ for n=1:maxit
     A2=spdiags(Y(:,2),0,I,I)+spdiags(X(2:I,2),-1,I,I)+spdiags([0;Z(1:I-1,2)],1,I,I);
     A = [A1,sparse(I,I);sparse(I,I),A2] + Aswitch;
     
-    if max(abs(sum(A,2)))>10^(-9)
-       disp('Improper Transition Matrix')
-       break
+    if max(abs(sum(A,2)))>10^(-12)
+        disp('Improper Transition Matrix')
+        break
     end
     
-    B = (1/Delta + rho)*speye(2*I) - A;
+    B = (rho + 1/Delta)*speye(2*I) - A;
     
     u_stacked = [u(:,1);u(:,2)];
     V_stacked = [V(:,1);V(:,2)];
@@ -133,86 +119,41 @@ for n=1:maxit
 end
 toc;
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%
-% FOKKER-PLANCK EQUATION %
-%%%%%%%%%%%%%%%%%%%%%%%%%%
-AT = A';
-b = zeros(2*I,1);
+% Graphs
+set(gca,'FontSize',14)
+plot(dist,'LineWidth',2)
+grid
+xlabel('Iteration')
+ylabel('||V^{n+1} - V^n||')
 
-%need to fix one value, otherwise matrix is singular
-i_fix = 1;
-b(i_fix)=.1;
-row = [zeros(1,i_fix-1),1,zeros(1,2*I-i_fix)];
-AT(i_fix,:) = row;
-
-%Solve linear system
-gg = AT\b;
-g_sum = gg'*ones(2*I,1)*da;
-gg = gg./g_sum;
-
-g = [gg(1:I),gg(I+1:2*I)];
-
-check1 = g(:,1)'*ones(I,1)*da;
-check2 = g(:,2)'*ones(I,1)*da;
-
-g_r(:,:,ir) = g;
-adot(:,:,ir) = zz + r.*aa - c;
-V_r(:,:,ir) = V;
-dV_r(:,:,ir) = dV_Upwind;
-c_r(:,:,ir) = c;
-
-S(ir) = g(:,1)'*a*da + g(:,2)'*a*da;
-end
-
-% ir = 9;
+% Verr = c.^(1-s)/(1-s) + dV_Upwind.*(zz + r.*aa - c) + ones(I,1)*la.*(V_switch - V) - rho.*V;
+% 
 % set(gca,'FontSize',14)
-% h1 = plot(a,dV_r(:,:,ir),a,dV_r(:,:,ir+1),'LineWidth',2)
-% legend(h1,'v_1\prime(a,r1)','v_2(a,r1)','v_1(a,r2)','v_2(a,r2)')
+% plot(a,Verr,'LineWidth',2)
 % grid
-% xlabel('a')
-% ylabel('s_i(a)')
+% xlabel('k')
+% ylabel('Error in HJB Equation')
 % xlim([amin amax])
 
-
-ir = 1;
-set(gca,'FontSize',14)
-h1 = plot(a,adot(:,:,ir),a,adot(:,:,ir+1),a,zeros(1,I),'--','LineWidth',2)
-legend(h1,'s_1(a,r1)','s_2(a,r1)','s_1(a,r2)','s_2(a,r2)')
+adot = zz + r.*aa - c;
+figure(1)
+set(gca,'FontSize',12)
+plot(a,V,'LineWidth',2)
 grid
 xlabel('a')
-ylabel('s_i(a)')
+ylabel('V_i(a)')
 xlim([amin amax])
 
-ir = 9;
 set(gca,'FontSize',14)
-h1 = plot(a,c_r(:,:,ir),a,c_r(:,:,ir+1),a,zeros(1,I),'--','LineWidth',2)
-legend(h1,'c_1(a,r1)','c_2(a,r1)','c_1(a,r2)','c_2(a,r2)')
+plot(a,c,'LineWidth',2)
 grid
 xlabel('a')
 ylabel('c_i(a)')
 xlim([amin amax])
 
-amax1 = .8;
 set(gca,'FontSize',14)
-h1 = plot(a,g_r(:,:,ir),'LineWidth',2)
-legend(h1,'g_1(a)','g_2(a)')
+plot(a,adot,a,zeros(1,I),'--','LineWidth',2)
 grid
 xlabel('a')
-ylabel('g_i(a)')
-xlim([amin amax1])
-
-Smax = max(S);
-amin1 = 1.1*amin;
-aaa = linspace(amin1,Smax,Ir);
-rrr = linspace(rmin,0.06,Ir);
-
-set(gca,'FontSize',14)
-plot(S,r_grid,zeros(1,Ir),rrr,zeros(1,Ir)+amin,rrr,'--',aaa,ones(1,Ir)*rho,'--','LineWidth',2)
-text(-0.1,0.045,'$r = \rho$','FontSize',16,'interpreter','latex')
-text(-0.05,0,'$S(r)$','FontSize',16,'interpreter','latex')
-text(-0.145,0.01,'$a=\underline{a}$','FontSize',16,'interpreter','latex')
-ylabel('$r$','FontSize',16,'interpreter','latex')
-xlabel('$S(r)$','FontSize',16,'interpreter','latex')
-ylim([rmin 0.06])
-xlim([amin1 Smax])
-print -depsc asset_supply.eps
+ylabel('s_i(a)')
+xlim([amin amax])
