@@ -1,6 +1,7 @@
 %% AIYAGARI MODEL WITH ENDOGENOUS LABOR SUPPLY - TWO SECTORS (FORMAL & INFORMAL)
 % Based on Achdou, Han, Lasry, Lions, and Moll (2017)
 % Extension with two sectors: Formal and Informal
+% demora aprox 6 minutos en correr!
 
 clear all; clc; close all;
 
