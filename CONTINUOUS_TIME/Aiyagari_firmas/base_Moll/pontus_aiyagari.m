@@ -1,3 +1,4 @@
+% codigo de pontus para Aiyagari base
 clear;
 
 % First solve the Aiyagari model

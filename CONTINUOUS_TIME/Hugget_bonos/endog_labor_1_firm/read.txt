@@ -1,0 +1,1 @@
+El archivo de lab_solve.m y HJB_labor_supply.m son sacados de la web de Moll y le agregamos comentarios. El HJB_labor_supply_equilibrum_v2 es nuestro y esta en borrador aún
